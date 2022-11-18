@@ -1,1 +1,0 @@
-../emboss/emboss_view_parameters.h
