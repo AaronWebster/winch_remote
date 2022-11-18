@@ -3,45 +3,39 @@
 #include <SPI.h>
 #include <Speck.h>
 
-constexpr uint8_t kEncryptionKey[16] = {106, 1,  215, 197, 229, 102, 167, 178,
-                                        96,  90, 179, 182, 24,  165, 89,  139};
+#include "common.h"
 
-constexpr char kForwardCommand[] = "forward";
-constexpr char kReverseCommand[] = "reverse";
+constexpr int kPinForward = 1;
+constexpr int kPinReverse = 1;
 
-#define PIN_FORWARD
-#define PIN_REVERSE
-
-#define RFM95_CS 8
-#define RFM95_RST 4
-#define RFM95_INT 7
-#define RF95_FREQ 434.0
-RH_RF95 rf95(RFM95_CS, RFM95_INT);
-Speck cipher;
-RHEncryptedDriver driver(rf95, cipher);
+enum PinState { kNone = 0, kForward = 1, kReverse = 2, kBoth = 3 };
 
 void setup() {
-  pinMode(RFM95_RST, OUTPUT);
-  digitalWrite(RFM95_RST, HIGH);
-  digitalWrite(RFM95_RST, LOW);
+  pinMode(kPinRf95Reset, OUTPUT);
+  digitalWrite(kPinRf95Reset, HIGH);
+  digitalWrite(kPinRf95Reset, LOW);
   delay(10);
-  digitalWrite(RFM95_RST, HIGH);
+  digitalWrite(kPinRf95Reset, HIGH);
   delay(10);
 
   rf95.init();
-  rf95.setFrequency(RF95_FREQ);
-  rf95.setTxPower(23, false);
+  rf95.setFrequency(kRf95Frequency);
+  rf95.setTxPower(kRf95TransmitPower, kRf95PaBoost);
   rf95.setModeTx();
   cipher.setKey(kEncryptionKey, sizeof(kEncryptionKey));
 }
 
 void loop() {
-  if (digitalRead(PIN_FORWARD)) {
-    driver.send(kForwardCommand, sizeof(kForwardCommand));
-  }
-
-  if (digitalRead(PIN_REVERSE)) {
-    driver.send(kReverseCommand, sizeof(kReverseCommand));
-  }
   delay(250);
+  PinState pin_state = static_cast<PinState>(digitalRead(kPinForward) |
+                                             (digitalRead(kPinReverse) << 1));
+  switch (pin_state) {
+    case PinState::kForward:
+      driver.send(kForwardCommand, sizeof(kForwardCommand));
+      break;
+    case PinState::kReverse:
+      driver.send(kReverseCommand, sizeof(kReverseCommand));
+    default:
+      break;
+  }
 }

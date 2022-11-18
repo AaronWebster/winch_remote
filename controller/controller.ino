@@ -3,73 +3,69 @@
 #include <SPI.h>
 #include <Speck.h>
 
+#include "common.h"
+
+constexpr int kPinForward = 1;
+constexpr int kPinReverse = 1;
+constexpr int kPinPower = 1;
+
 class ControlTimeout {
  public:
-  ControlTimeout(uint32_t timeout_ms)
-      : timeout_ms_(timeout_ms), expiration_ms_(0), expired_(true) {}
+  ControlTimeout(uint64_t timeout_us)
+      : timeout_us_(timeout_us), expiration_us_(0), expired_(true) {}
 
   void Poll() {
-    if (!expired_ && expiration_ms_ <= millis()) expired_ = true;
+    if (!expired_ && expiration_us_ <= Micros64()) expired_ = true;
   }
 
   bool HasExpired() const { return expired_; }
 
   void Reset() {
-    expiration_ms_ = millis() + timeout_ms_;
+    expiration_us_ = Micros64() + timeout_us_;
     expired_ = false;
   }
 
  private:
-  const uint32_t timeout_ms_;
-  uint32_t expiration_ms_;
+  uint64_t Micros64() {
+    static uint32_t low32, high32;
+    uint32_t new_low32 = micros();
+    if (new_low32 < low32) high32++;
+    low32 = new_low32;
+    return (uint64_t)high32 << 32 | low32;
+  }
+
+  const uint64_t timeout_us_;
+  uint64_t expiration_us_;
   bool expired_ = true;
 };
 
-#define PIN_FORWARD 1
-#define PIN_REVERSE 2
-#define PIN_POWER 3
-
-#define RFM95_CS 8
-#define RFM95_RST 4
-#define RFM95_INT 7
-#define RF95_FREQ 434.0
-RH_RF95 rf95(RFM95_CS, RFM95_INT);
-
-Speck cipher;
-RHEncryptedDriver driver(rf95, cipher);
-constexpr uint8_t kEncryptionKey[16] = {106, 1,  215, 197, 229, 102, 167, 178,
-                                        96,  90, 179, 182, 24,  165, 89,  139};
-
 enum State { kForward, kReverse, kStopped };
 State state = kStopped;
-
-constexpr char kForwardCommand[] = "forward";
-constexpr char kReverseCommand[] = "reverse";
 
 constexpr int kControlTimeoutMs = 500;
 ControlTimeout control_timeout(kControlTimeoutMs);
 
 void setup() {
-  pinMode(PIN_FORWARD, OUTPUT);
-  pinMode(PIN_REVERSE, OUTPUT);
-  pinMode(PIN_POWER, OUTPUT);
+  pinMode(kPinForward, OUTPUT);
+  pinMode(kPinReverse, OUTPUT);
+  pinMode(kPinPower, OUTPUT);
 
-  digitalWrite(PIN_FORWARD, LOW);
-  digitalWrite(PIN_REVERSE, LOW);
-  digitalWrite(PIN_POWER, LOW);
+  digitalWrite(kPinForward, LOW);
+  digitalWrite(kPinReverse, LOW);
+  digitalWrite(kPinPower, LOW);
 
-  pinMode(RFM95_RST, OUTPUT);
-  digitalWrite(RFM95_RST, HIGH);
+  pinMode(kPinRf95Reset, OUTPUT);
+  digitalWrite(kPinRf95Reset, HIGH);
 
   delay(100);
-  digitalWrite(RFM95_RST, LOW);
+  digitalWrite(kPinRf95Reset, LOW);
   delay(10);
-  digitalWrite(RFM95_RST, HIGH);
+  digitalWrite(kPinRf95Reset, HIGH);
   delay(10);
 
   rf95.init();
-  rf95.setFrequency(RF95_FREQ);
-  rf95.setTxPower(23, false);
+  rf95.setFrequency(kRf95Frequency);
+  rf95.setTxPower(kRf95TransmitPower, kRf95PaBoost);
   rf95.setModeRx();
 
   cipher.setKey(kEncryptionKey, sizeof(kEncryptionKey));
@@ -79,19 +75,19 @@ void UpdateState(State new_state) {
   state = new_state;
   switch (state) {
     case State::kStopped:
-      digitalWrite(PIN_POWER, LOW);
-      digitalWrite(PIN_FORWARD, LOW);
-      digitalWrite(PIN_REVERSE, LOW);
+      digitalWrite(kPinPower, LOW);
+      digitalWrite(kPinForward, LOW);
+      digitalWrite(kPinReverse, LOW);
       break;
     case State::kForward:
-      digitalWrite(PIN_POWER, HIGH);
-      digitalWrite(PIN_FORWARD, HIGH);
-      digitalWrite(PIN_REVERSE, LOW);
+      digitalWrite(kPinPower, HIGH);
+      digitalWrite(kPinForward, HIGH);
+      digitalWrite(kPinReverse, LOW);
       break;
     case State::kReverse:
-      digitalWrite(PIN_POWER, HIGH);
-      digitalWrite(PIN_FORWARD, LOW);
-      digitalWrite(PIN_REVERSE, HIGH);
+      digitalWrite(kPinPower, HIGH);
+      digitalWrite(kPinForward, LOW);
+      digitalWrite(kPinReverse, HIGH);
       break;
   }
   if (state != State::kStopped) control_timeout.Reset();
