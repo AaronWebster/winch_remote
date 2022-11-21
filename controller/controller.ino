@@ -13,7 +13,6 @@ constexpr int kPinPowerPositive = 12;
 constexpr int kPinPowerNegative = 13;
 constexpr int kPinForward = 14;
 constexpr int kPinReverse = 27;
-constexpr int kPinReverse = 26;
 
 // Control timeout.  When no command has been received by this many
 // milliseocnds, disable the output.
