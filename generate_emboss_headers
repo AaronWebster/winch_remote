@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -e 
+./emboss/embossc packets.emb
+
+find . -name "*.h" -exec sed -i -e 's:runtime/cpp/::' '{}' \;
+
+for subdir in controller remote; do
+  cp packets.emb.h "${subdir}"/packets.emb.h
+  cp emboss/* "${subdir}"/
+done

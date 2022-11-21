@@ -1,41 +1,58 @@
-#include <RHEncryptedDriver.h>
-#include <RH_RF95.h>
-#include <SPI.h>
-#include <Speck.h>
+#include <WiFi.h>
+#include <esp_now.h>
 
-#include "common.h"
+#include "packets.emb.h"
 
-constexpr int kPinForward = 1;
-constexpr int kPinReverse = 1;
+using namespace winch_remote;
 
-enum PinState { kNone = 0, kForward = 1, kReverse = 2, kBoth = 3 };
+// Address of the control unit.
+constexpr uint8_t kBroadcastAddress[] = {0xC8, 0xF0, 0x9E, 0x9E, 0x4B, 0xA8};
+
+// Pin definitions.
+constexpr int kPinForward = 17;
+constexpr int kPinReverse = 16;
+
+// Delay between sending packets when the toggle switch is either FORWARD or
+// REVERSE.
+constexpr int kTransmitDelayMs = 25;
+
+// Control unit registration info.
+esp_now_peer_info_t peer_info;
+
+// Packet buffer.
+uint8_t packet_buf = 0;
+PacketWriter packet{&packet_buf, sizeof(packet_buf)};
+
+// Callback for when a packet was sent.
+void HandleTransmit(const uint8_t *mac_addr, esp_now_send_status_t status) {}
 
 void setup() {
-  pinMode(kPinRf95Reset, OUTPUT);
-  digitalWrite(kPinRf95Reset, HIGH);
-  digitalWrite(kPinRf95Reset, LOW);
-  delay(10);
-  digitalWrite(kPinRf95Reset, HIGH);
-  delay(10);
+  pinMode(kPinForward, INPUT_PULLUP);
+  pinMode(kPinReverse, INPUT_PULLUP);
 
-  rf95.init();
-  rf95.setFrequency(kRf95Frequency);
-  rf95.setTxPower(kRf95TransmitPower, kRf95PaBoost);
-  rf95.setModeTx();
-  cipher.setKey(kEncryptionKey, sizeof(kEncryptionKey));
+  WiFi.mode(WIFI_STA);
+
+  if (esp_now_init() != ESP_OK) return setup();
+
+  esp_now_register_send_cb(HandleTransmit);
+
+  memcpy(peer_info.peer_addr, kBroadcastAddress, 6);
+  peer_info.channel = 0;
+  peer_info.encrypt = false;
+
+  if (esp_now_add_peer(&peer_info) != ESP_OK) return setup();
 }
 
 void loop() {
-  delay(250);
-  PinState pin_state = static_cast<PinState>(digitalRead(kPinForward) |
-                                             (digitalRead(kPinReverse) << 1));
-  switch (pin_state) {
-    case PinState::kForward:
-      driver.send(kForwardCommand, sizeof(kForwardCommand));
-      break;
-    case PinState::kReverse:
-      driver.send(kReverseCommand, sizeof(kReverseCommand));
-    default:
-      break;
+  delay(kTransmitDelayMs);
+
+  // Read packet direction.  This maps directly to an enum value if valid.
+  // Otherwise, Ok() returns false and the packet is not sent.
+  packet.direction().Write(static_cast<Direction>(
+      !digitalRead(kPinForward) | (!digitalRead(kPinReverse)) << 1));
+
+  if (packet.Ok()) {
+    esp_now_send(kBroadcastAddress, packet.BackingStorage().data(),
+                 packet.SizeInBytes());
   }
 }

@@ -1,115 +1,111 @@
-#include <RHEncryptedDriver.h>
-#include <RH_RF95.h>
-#include <SPI.h>
-#include <Speck.h>
+#include <WiFi.h>
+#include <esp_now.h>
 
-#include "common.h"
+#include "packets.emb.h"
 
-constexpr int kPinForward = 1;
-constexpr int kPinReverse = 1;
-constexpr int kPinPower = 1;
+using namespace winch_remote;
 
+// MAC address of the remote control unit.
+constexpr uint8_t kRemoteAddress[] = {0xC0, 0x49, 0xEF, 0xCC, 0x9A, 0x20};
+
+// Pin definitions.
+constexpr int kPinPowerPositive = 12;
+constexpr int kPinPowerNegative = 13;
+constexpr int kPinForward = 14;
+constexpr int kPinReverse = 27;
+constexpr int kPinReverse = 26;
+
+// Control timeout.  When no command has been received by this many
+// milliseocnds, disable the output.
+constexpr int kControlTimeoutMs = 50;
+
+// ON/OFF macros since the HIGH corresponds to the relay in the OFF position.
+#define ON LOW
+#define OFF HIGH
+
+// Class to manage the control timeout.
 class ControlTimeout {
  public:
-  ControlTimeout(uint64_t timeout_us)
-      : timeout_us_(timeout_us), expiration_us_(0), expired_(true) {}
+  ControlTimeout(uint32_t timeout_ms)
+      : timeout_ms_(timeout_ms), expiration_ms_(0), expired_(true) {}
 
+  // Must be called at the start of loop().
   void Poll() {
-    if (!expired_ && expiration_us_ <= Micros64()) expired_ = true;
+    if (!expired_ && expiration_ms_ <= millis()) expired_ = true;
   }
 
+  // Returns true if the timeout has expired, otherwise false.
   bool HasExpired() const { return expired_; }
 
+  // Resets the control timeout using its configured exipration.
   void Reset() {
-    expiration_us_ = Micros64() + timeout_us_;
+    expiration_ms_ = millis() + timeout_ms_;
     expired_ = false;
   }
 
  private:
-  uint64_t Micros64() {
-    static uint32_t low32, high32;
-    uint32_t new_low32 = micros();
-    if (new_low32 < low32) high32++;
-    low32 = new_low32;
-    return (uint64_t)high32 << 32 | low32;
-  }
-
-  const uint64_t timeout_us_;
-  uint64_t expiration_us_;
+  const uint32_t timeout_ms_;
+  uint32_t expiration_ms_;
   bool expired_ = true;
 };
 
-enum State { kForward, kReverse, kStopped };
-State state = kStopped;
-
-constexpr int kControlTimeoutMs = 500;
 ControlTimeout control_timeout(kControlTimeoutMs);
 
-void setup() {
-  pinMode(kPinForward, OUTPUT);
-  pinMode(kPinReverse, OUTPUT);
-  pinMode(kPinPower, OUTPUT);
+// Handle received messages.
+void HandleReceive(const uint8_t *address, const uint8_t *data, int size) {
+  // Ignore if not from the whitelisted MAC address.
+  if (memcmp(address, kRemoteAddress, 6) != 0) return;
 
-  digitalWrite(kPinForward, LOW);
-  digitalWrite(kPinReverse, LOW);
-  digitalWrite(kPinPower, LOW);
+  auto packet = MakePacketView(data, size);
+  if (!packet.Ok()) return;
 
-  pinMode(kPinRf95Reset, OUTPUT);
-  digitalWrite(kPinRf95Reset, HIGH);
-
-  delay(100);
-  digitalWrite(kPinRf95Reset, LOW);
-  delay(10);
-  digitalWrite(kPinRf95Reset, HIGH);
-  delay(10);
-
-  rf95.init();
-  rf95.setFrequency(kRf95Frequency);
-  rf95.setTxPower(kRf95TransmitPower, kRf95PaBoost);
-  rf95.setModeRx();
-
-  cipher.setKey(kEncryptionKey, sizeof(kEncryptionKey));
-}
-
-void UpdateState(State new_state) {
-  state = new_state;
-  switch (state) {
-    case State::kStopped:
-      digitalWrite(kPinPower, LOW);
-      digitalWrite(kPinForward, LOW);
-      digitalWrite(kPinReverse, LOW);
+  // Ignore all direction commands except for FORWARD and REVERSE.
+  switch (packet.direction().Read()) {
+    case Direction::FORWARD:
+      digitalWrite(kPinForward, ON);
+      digitalWrite(kPinReverse, OFF);
+      digitalWrite(kPinPowerPositive, ON);
+      digitalWrite(kPinPowerNegative, ON);
+      control_timeout.Reset();
       break;
-    case State::kForward:
-      digitalWrite(kPinPower, HIGH);
-      digitalWrite(kPinForward, HIGH);
-      digitalWrite(kPinReverse, LOW);
-      break;
-    case State::kReverse:
-      digitalWrite(kPinPower, HIGH);
-      digitalWrite(kPinForward, LOW);
-      digitalWrite(kPinReverse, HIGH);
+    case Direction::REVERSE:
+      digitalWrite(kPinForward, OFF);
+      digitalWrite(kPinReverse, ON);
+      digitalWrite(kPinPowerPositive, ON);
+      digitalWrite(kPinPowerNegative, ON);
+      control_timeout.Reset();
       break;
   }
-  if (state != State::kStopped) control_timeout.Reset();
+}
+
+void setup() {
+  // Set pins as input so that they will not trigger the relay on boot.
+  pinMode(kPinPowerPositive, INPUT_PULLUP);
+  pinMode(kPinPowerNegative, INPUT_PULLUP);
+  pinMode(kPinForward, INPUT_PULLUP);
+  pinMode(kPinReverse, INPUT_PULLUP);
+
+  pinMode(kPinPowerPositive, OUTPUT);
+  pinMode(kPinPowerNegative, OUTPUT);
+  pinMode(kPinForward, OUTPUT);
+  pinMode(kPinReverse, OUTPUT);
+
+  digitalWrite(kPinPowerPositive, OFF);
+  digitalWrite(kPinPowerNegativeOFF);
+  digitalWrite(kPinForward, OFF);
+  digitalWrite(kPinReverse, OFF);
+
+  WiFi.mode(WIFI_STA);
+  if (esp_now_init() != ESP_OK) return setup();
+  esp_now_register_recv_cb(HandleReceive);
 }
 
 void loop() {
   control_timeout.Poll();
-  if (control_timeout.HasExpired()) UpdateState(State::kStopped);
-
-  if (!driver.available()) return;
-  uint8_t buf[driver.maxMessageLength()];
-  memset(&buf, 0, driver.maxMessageLength());
-  uint8_t len = sizeof(buf);
-  if (!driver.recv(buf, &len)) return;
-
-  if (len == 0) return;
-
-  if (len == sizeof(kForwardCommand) && strcmp(buf, kForwardCommand) == 0) {
-    return UpdateState(kForward);
-  }
-
-  if (len == sizeof(kReverseCommand) && strcmp(buf, kReverseCommand) == 0) {
-    return UpdateState(kReverse);
+  if (control_timeout.HasExpired()) {
+    digitalWrite(kPinPowerPositive, OFF);
+    digitalWrite(kPinPowerNegative, OFF);
+    digitalWrite(kPinForward, OFF);
+    digitalWrite(kPinReverse, OFF);
   }
 }
