@@ -32,7 +32,7 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
 
-  if (esp_now_init() != ESP_OK) return setup();
+  while (esp_now_init() != ESP_OK) delay(1000);
 
   esp_now_register_send_cb(HandleTransmit);
 
@@ -40,7 +40,7 @@ void setup() {
   peer_info.channel = 0;
   peer_info.encrypt = false;
 
-  if (esp_now_add_peer(&peer_info) != ESP_OK) return setup();
+  while (esp_now_add_peer(&peer_info) != ESP_OK) delay(1000);
 }
 
 void loop() {

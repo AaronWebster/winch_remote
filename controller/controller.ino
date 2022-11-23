@@ -15,8 +15,8 @@ constexpr int kPinForward = 14;
 constexpr int kPinReverse = 27;
 
 // Control timeout.  When no command has been received by this many
-// milliseocnds, disable the output.
-constexpr int kControlTimeoutMs = 50;
+// milliseconds, disable the output.
+constexpr int kControlTimeoutMs = 100;
 
 // ON/OFF macros since the HIGH corresponds to the relay in the OFF position.
 #define ON LOW
@@ -36,7 +36,7 @@ class ControlTimeout {
   // Returns true if the timeout has expired, otherwise false.
   bool HasExpired() const { return expired_; }
 
-  // Resets the control timeout using its configured exipration.
+  // Resets the control timeout using its configured expiration.
   void Reset() {
     expiration_ms_ = millis() + timeout_ms_;
     expired_ = false;
@@ -52,7 +52,7 @@ ControlTimeout control_timeout(kControlTimeoutMs);
 
 // Handle received messages.
 void HandleReceive(const uint8_t *address, const uint8_t *data, int size) {
-  // Ignore if not from the whitelisted MAC address.
+  // Ignore if not from the expected remote address.
   if (memcmp(address, kRemoteAddress, 6) != 0) return;
 
   auto packet = MakePacketView(data, size);
@@ -90,12 +90,12 @@ void setup() {
   pinMode(kPinReverse, OUTPUT);
 
   digitalWrite(kPinPowerPositive, OFF);
-  digitalWrite(kPinPowerNegativeOFF);
+  digitalWrite(kPinPowerNegative, OFF);
   digitalWrite(kPinForward, OFF);
   digitalWrite(kPinReverse, OFF);
 
   WiFi.mode(WIFI_STA);
-  if (esp_now_init() != ESP_OK) return setup();
+  while (esp_now_init() != ESP_OK) delay(1000);
   esp_now_register_recv_cb(HandleReceive);
 }
 

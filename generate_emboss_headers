@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -e 
-./emboss/embossc packets.emb
+../emboss/embossc packets.emb
+cp ../emboss/runtime/cpp/*.h emboss/
 
 find . -name "*.h" -exec sed -i -e 's:runtime/cpp/::' '{}' \;
 

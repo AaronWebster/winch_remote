@@ -1,5 +1,5 @@
-controller/emboss*.h
+controller/emboss*
 controller/packets.emb.h
-remote/emboss*.h
+remote/emboss*
 remote/packets.emb.h
 *.un~
