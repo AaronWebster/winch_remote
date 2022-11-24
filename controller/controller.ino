@@ -1,18 +1,13 @@
 #include <WiFi.h>
 #include <esp_now.h>
 
-#include "packets.emb.h"
-
-using namespace winch_remote;
+// Pin definitions.
+constexpr int kPinPower = 12;
+constexpr int kPinForward = 14;
+constexpr int kPinReverse = 27;
 
 // MAC address of the remote control unit.
 constexpr uint8_t kRemoteAddress[] = {0xC0, 0x49, 0xEF, 0xCC, 0x9A, 0x20};
-
-// Pin definitions.
-constexpr int kPinPowerPositive = 12;
-constexpr int kPinPowerNegative = 13;
-constexpr int kPinForward = 14;
-constexpr int kPinReverse = 27;
 
 // Control timeout.  When no command has been received by this many
 // milliseconds, disable the output.
@@ -25,12 +20,18 @@ constexpr int kControlTimeoutMs = 100;
 // Class to manage the control timeout.
 class ControlTimeout {
  public:
-  ControlTimeout(uint32_t timeout_ms)
-      : timeout_ms_(timeout_ms), expiration_ms_(0), expired_(true) {}
+  ControlTimeout(uint32_t timeout_ms, std::function<void()> callback)
+      : timeout_ms_(timeout_ms),
+        callback_(std::move(callback)),
+        expiration_ms_(0),
+        expired_(true) {}
 
   // Must be called at the start of loop().
   void Poll() {
-    if (!expired_ && expiration_ms_ <= millis()) expired_ = true;
+    if (!expired_ && expiration_ms_ <= millis()) {
+      callback_();
+      expired_ = true;
+    }
   }
 
   // Returns true if the timeout has expired, otherwise false.
@@ -44,53 +45,51 @@ class ControlTimeout {
 
  private:
   const uint32_t timeout_ms_;
+  std::function<void()> callback_;
   uint32_t expiration_ms_;
   bool expired_ = true;
 };
 
-ControlTimeout control_timeout(kControlTimeoutMs);
+ControlTimeout control_timeout(kControlTimeoutMs, [] {
+  digitalWrite(kPinPower, OFF);
+  digitalWrite(kPinForward, OFF);
+  digitalWrite(kPinReverse, OFF);
+});
 
 // Handle received messages.
 void HandleReceive(const uint8_t *address, const uint8_t *data, int size) {
   // Ignore if not from the expected remote address.
   if (memcmp(address, kRemoteAddress, 6) != 0) return;
 
-  auto packet = MakePacketView(data, size);
-  if (!packet.Ok()) return;
-
-  // Ignore all direction commands except for FORWARD and REVERSE.
-  switch (packet.direction().Read()) {
-    case Direction::FORWARD:
+  switch (*data) {
+    case 1:
       digitalWrite(kPinForward, ON);
       digitalWrite(kPinReverse, OFF);
-      digitalWrite(kPinPowerPositive, ON);
-      digitalWrite(kPinPowerNegative, ON);
+      digitalWrite(kPinPower, ON);
       control_timeout.Reset();
       break;
-    case Direction::REVERSE:
+    case 2:
       digitalWrite(kPinForward, OFF);
       digitalWrite(kPinReverse, ON);
-      digitalWrite(kPinPowerPositive, ON);
-      digitalWrite(kPinPowerNegative, ON);
+      digitalWrite(kPinPower, ON);
       control_timeout.Reset();
+      break;
+    default:
       break;
   }
 }
 
 void setup() {
   // Set pins as input so that they will not trigger the relay on boot.
-  pinMode(kPinPowerPositive, INPUT_PULLUP);
-  pinMode(kPinPowerNegative, INPUT_PULLUP);
+  pinMode(kPinPower, INPUT_PULLUP);
   pinMode(kPinForward, INPUT_PULLUP);
   pinMode(kPinReverse, INPUT_PULLUP);
 
-  pinMode(kPinPowerPositive, OUTPUT);
-  pinMode(kPinPowerNegative, OUTPUT);
+  pinMode(kPinPower, OUTPUT);
   pinMode(kPinForward, OUTPUT);
   pinMode(kPinReverse, OUTPUT);
 
-  digitalWrite(kPinPowerPositive, OFF);
-  digitalWrite(kPinPowerNegative, OFF);
+  digitalWrite(kPinPower, OFF);
   digitalWrite(kPinForward, OFF);
   digitalWrite(kPinReverse, OFF);
 
@@ -99,12 +98,4 @@ void setup() {
   esp_now_register_recv_cb(HandleReceive);
 }
 
-void loop() {
-  control_timeout.Poll();
-  if (control_timeout.HasExpired()) {
-    digitalWrite(kPinPowerPositive, OFF);
-    digitalWrite(kPinPowerNegative, OFF);
-    digitalWrite(kPinForward, OFF);
-    digitalWrite(kPinReverse, OFF);
-  }
-}
+void loop() { control_timeout.Poll(); }
